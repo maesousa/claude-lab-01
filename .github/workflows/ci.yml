@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+# Cancel in-progress runs on the same branch when a new push arrives
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chargeback-app
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Node.js setup ─────────────────────────────────────────────────────────
+      - name: Setup Node.js 20 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: chargeback-app/package-lock.json
+
+      # ── Install ───────────────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Lint ──────────────────────────────────────────────────────────────────
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      # ── Typecheck ─────────────────────────────────────────────────────────────
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+
+      # ── Test ──────────────────────────────────────────────────────────────────
+      # Tests mock Prisma — no real database needed here
+      - name: Unit & integration tests (Jest)
+        run: npm run test:ci
+        env:
+          DATABASE_URL: file:./ci-test.db
+
+      # ── Build ─────────────────────────────────────────────────────────────────
+      # next build needs a valid (can be empty) SQLite database to satisfy
+      # the server components that query Prisma at request time during pre-rendering
+      - name: Create empty CI database
+        run: npx prisma db push --skip-generate
+        env:
+          DATABASE_URL: file:./ci-build.db
+
+      - name: Build (next build)
+        run: npm run build
+        env:
+          DATABASE_URL: file:./ci-build.db
+          # Disable telemetry in CI
+          NEXT_TELEMETRY_DISABLED: "1"
