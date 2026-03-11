@@ -1,0 +1,6 @@
+# Claude Code session data — never commit
+.claude/worktrees/
+.claude/projects/
+
+# Keep launch.json (useful dev server config)
+!.claude/launch.json
