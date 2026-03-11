@@ -1,0 +1,53 @@
+# ── Production / staging deployment only ─────────────────────────────────────
+# Local development uses SQLite (no Docker needed).
+# This file is for deploying the app in a container environment with PostgreSQL.
+#
+# To deploy:
+#   1. Set DATABASE_URL to a real PostgreSQL connection string in your env
+#   2. docker compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: '3.9'
+
+services:
+  # ── PostgreSQL database (production) ─────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: chargeback-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       chargeback
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chargeback"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Next.js application ───────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chargeback-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL:    postgresql://postgres:password@db:5432/chargeback
+      NEXTAUTH_SECRET: change-me-in-production
+      NEXTAUTH_URL:    http://localhost:3000
+      NODE_ENV:        production
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/app/docker-entrypoint.sh"]
+
+volumes:
+  pgdata:
+    name: chargeback-pgdata

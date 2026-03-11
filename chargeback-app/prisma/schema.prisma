@@ -1,0 +1,182 @@
+// ────────────────────────────────────────────────────────────────────────────
+// Chargeback App — Prisma Schema
+// Entities: Pelouro, Direcao, Area, Employee, ServiceCategory,
+//           DSIResponsible, ITItem, AnnualPrice, Assignment,
+//           DirectCost, User
+// ────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ── FundingModel values (stored as String — SQLite has no native enum) ────
+// Valid values: "CORPORATE" | "CHARGEBACK"
+//   CORPORATE  — DSI absorbs the cost; not charged to business areas
+//   CHARGEBACK — Cost transferred to business areas; appears in reports
+
+// ── Organisational Hierarchy ───────────────────────────────────────────────
+// Pelouro → Direcao → Area (Cost Center) → Employee
+
+model Pelouro {
+  id       String    @id @default(uuid())
+  code     String    @unique // e.g. "COM", "MKT", "AFI"
+  name     String            // e.g. "Comercial", "Marketing", "Admin/Financeira"
+  isActive Boolean   @default(true)
+  direcoes Direcao[]
+
+  @@map("pelouros")
+}
+
+model Direcao {
+  id        String  @id @default(uuid())
+  code      String  @unique // e.g. "DIR-COM-01"
+  name      String          // e.g. "Direção Comercial"
+  pelouroId String
+  isActive  Boolean @default(true)
+  pelouro   Pelouro @relation(fields: [pelouroId], references: [id])
+  areas     Area[]
+
+  @@map("direcoes")
+}
+
+model Area {
+  id          String       @id @default(uuid())
+  code        String       @unique // Cost-center code, e.g. "CC-201"
+  name        String               // e.g. "Marketing Digital"
+  direcaoId   String
+  isActive    Boolean      @default(true)
+  direcao     Direcao      @relation(fields: [direcaoId], references: [id])
+  employees   Employee[]
+  directCosts DirectCost[]
+
+  @@map("areas")
+}
+
+// ── People ─────────────────────────────────────────────────────────────────
+
+model Employee {
+  id             String       @id @default(uuid())
+  employeeNumber String       @unique // SAP HR employee number
+  firstName      String
+  lastName       String
+  email          String       @unique
+  areaId         String
+  company        String?      // Legal entity, e.g. "Super Bock Bebidas", "VMPS"
+  isActive       Boolean      @default(true)
+  area           Area         @relation(fields: [areaId], references: [id])
+  assignments    Assignment[]
+
+  @@map("employees")
+}
+
+// ── IT Service Catalogue ───────────────────────────────────────────────────
+
+model ServiceCategory {
+  id          String   @id @default(uuid())
+  code        String   @unique // e.g. "WORKPLACE_HW", "WORKPLACE_SW"
+  name        String           // e.g. "Workplace Hardware"
+  description String?
+  color       String?  // Hex color for UI badges, e.g. "#3B82F6"
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  items       ITItem[]
+
+  @@map("service_categories")
+}
+
+model DSIResponsible {
+  id       String   @id @default(uuid())
+  code     String   @unique // Initials / short code, e.g. "AM", "PNM", "DG"
+  name     String           // Full name
+  email    String?
+  isActive Boolean  @default(true)
+  items    ITItem[]
+
+  @@map("dsi_responsibles")
+}
+
+model ITItem {
+  id                 String          @id @default(uuid())
+  code               String          @unique // e.g. "HW-LAPTOP", "SW-M365-E3"
+  name               String                  // e.g. "Laptop Standard", "Microsoft 365 E3"
+  serviceCategoryId  String
+  fundingModel       String          // "CORPORATE" | "CHARGEBACK"
+  unit               String          // e.g. "device", "licence", "month"
+  description        String?
+  dsiResponsibleId   String?         // Optional: DSI team member who manages this item
+  isActive           Boolean         @default(true)
+  serviceCategory    ServiceCategory @relation(fields: [serviceCategoryId], references: [id])
+  dsiResponsible     DSIResponsible? @relation(fields: [dsiResponsibleId], references: [id])
+  prices             AnnualPrice[]
+  assignments        Assignment[]
+  directCosts        DirectCost[]
+
+  @@map("it_items")
+}
+
+// ── Pricing ────────────────────────────────────────────────────────────────
+
+model AnnualPrice {
+  id        String  @id @default(uuid())
+  itItemId  String
+  year      Int
+  unitPrice Decimal // Cost per unit per year
+  notes     String?
+  itItem    ITItem  @relation(fields: [itItemId], references: [id])
+
+  @@unique([itItemId, year])
+  @@map("annual_prices")
+}
+
+// ── Cost Assignments ───────────────────────────────────────────────────────
+// Mechanism A: Per-employee allocation
+// assignment_cost = quantity × annual_price.unitPrice
+
+model Assignment {
+  id         String   @id @default(uuid())
+  employeeId String
+  itItemId   String
+  year       Int
+  quantity   Decimal  // e.g. 1.000 device, 0.500 licence share
+  notes      String?
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  itItem     ITItem   @relation(fields: [itItemId], references: [id])
+
+  @@unique([employeeId, itItemId, year])
+  @@map("assignments")
+}
+
+// ── Direct Area Costs ──────────────────────────────────────────────────────
+// Mechanism B: Fixed annual cost charged directly to a cost center
+// direct_cost = totalCost (no per-employee breakdown)
+
+model DirectCost {
+  id        String  @id @default(uuid())
+  areaId    String
+  itItemId  String
+  year      Int
+  totalCost Decimal // Total annual cost charged to this area
+  notes     String?
+  area      Area    @relation(fields: [areaId], references: [id])
+  itItem    ITItem  @relation(fields: [itItemId], references: [id])
+
+  @@unique([areaId, itItemId, year])
+  @@map("direct_costs")
+}
+
+// ── Application User ───────────────────────────────────────────────────────
+
+model User {
+  id           String  @id @default(uuid())
+  email        String  @unique
+  name         String
+  passwordHash String
+  isActive     Boolean @default(true)
+
+  @@map("users")
+}
