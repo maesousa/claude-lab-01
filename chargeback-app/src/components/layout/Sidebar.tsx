@@ -15,6 +15,7 @@ const ADMIN_NAV = [
   { label: 'Annual Prices', href: '/annual-prices' },
   { label: 'Organisation',  href: '/admin/organisation' },
   { label: 'Categories',    href: '/admin/categories' },
+  { label: 'Import',        href: '/admin/import' },
 ]
 
 export function Sidebar() {
