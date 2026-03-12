@@ -1,7 +1,7 @@
 import AssignmentsClient from './AssignmentsClient'
 
 export const metadata = {
-  title: 'Assignments — Chargeback App',
+  title: 'Individual Costs — Chargeback App',
 }
 
 export default function AssignmentsPage() {

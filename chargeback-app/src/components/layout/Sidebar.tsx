@@ -4,11 +4,11 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const MAIN_NAV = [
-  { label: 'Dashboard',    href: '/' },
-  { label: 'IT Items',     href: '/items' },
-  { label: 'Assignments',  href: '/assignments' },
-  { label: 'Direct Costs', href: '/direct-costs' },
-  { label: 'Reports',      href: '/reports' },
+  { label: 'Dashboard',        href: '/' },
+  { label: 'IT Catalogue',     href: '/items' },
+  { label: 'Individual Costs', href: '/assignments' },
+  { label: 'Bulk Costs',       href: '/direct-costs' },
+  { label: 'Reports',          href: '/reports' },
 ]
 
 const ADMIN_NAV = [
