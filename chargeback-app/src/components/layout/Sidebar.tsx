@@ -3,12 +3,18 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-const NAV_ITEMS = [
-  { label: 'Dashboard',     href: '/' },
-  { label: 'IT Items',      href: '/items' },
-  { label: 'Assignments',   href: '/assignments' },
-  { label: 'Direct Costs',  href: '/direct-costs' },
-  { label: 'Reports',       href: '/reports' },
+const MAIN_NAV = [
+  { label: 'Dashboard',    href: '/' },
+  { label: 'IT Items',     href: '/items' },
+  { label: 'Assignments',  href: '/assignments' },
+  { label: 'Direct Costs', href: '/direct-costs' },
+  { label: 'Reports',      href: '/reports' },
+]
+
+const ADMIN_NAV = [
+  { label: 'Annual Prices', href: '/annual-prices' },
+  { label: 'Organisation',  href: '/admin/organisation' },
+  { label: 'Categories',    href: '/admin/categories' },
 ]
 
 export function Sidebar() {
@@ -17,6 +23,23 @@ export function Sidebar() {
   function isActive(href: string) {
     if (href === '/') return pathname === '/'
     return pathname.startsWith(href)
+  }
+
+  function navLink(item: { label: string; href: string }) {
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={cn(
+          'flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+          isActive(item.href)
+            ? 'bg-slate-700 text-white'
+            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+        )}
+      >
+        {item.label}
+      </Link>
+    )
   }
 
   return (
@@ -29,20 +52,14 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-0.5">
-        {NAV_ITEMS.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              'flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-              isActive(item.href)
-                ? 'bg-slate-700 text-white'
-                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-            )}
-          >
-            {item.label}
-          </Link>
-        ))}
+        {MAIN_NAV.map(navLink)}
+
+        {/* Admin section */}
+        <div className="border-t border-slate-700 my-3" />
+        <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Admin
+        </p>
+        {ADMIN_NAV.map(navLink)}
       </nav>
 
       {/* Footer */}
