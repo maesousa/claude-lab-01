@@ -12,10 +12,11 @@ const MAIN_NAV = [
 ]
 
 const ADMIN_NAV = [
-  { label: 'Annual Prices', href: '/annual-prices' },
-  { label: 'Organisation',  href: '/admin/organisation' },
-  { label: 'Categories',    href: '/admin/categories' },
-  { label: 'Import',        href: '/admin/import' },
+  { label: 'Annual Prices',   href: '/annual-prices' },
+  { label: 'Organisation',    href: '/admin/organisation' },
+  { label: 'Categories',      href: '/admin/categories' },
+  { label: 'DSI Responsible', href: '/admin/dsi-responsibles' },
+  { label: 'Import',          href: '/admin/import' },
 ]
 
 export function Sidebar() {
