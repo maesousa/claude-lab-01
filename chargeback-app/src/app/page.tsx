@@ -1,9 +1,11 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { toNumber, formatCurrency } from '@/lib/utils'
+import YearSelector from '@/components/YearSelector'
 
-const YEAR = 2026
+const DEFAULT_YEAR = 2026
 
-async function getDashboardData() {
+async function getDashboardData(year: number) {
   const [
     employeeCount,
     chargebackItemCount,
@@ -16,18 +18,18 @@ async function getDashboardData() {
     prisma.iTItem.count({ where: { isActive: true, fundingModel: 'CHARGEBACK' } }),
     prisma.serviceCategory.findMany({ orderBy: { sortOrder: 'asc' } }),
     prisma.assignment.findMany({
-      where: { year: YEAR },
+      where: { year },
       include: {
         itItem: {
           include: {
-            prices: { where: { year: YEAR } },
+            prices: { where: { year } },
             serviceCategory: true,
           },
         },
       },
     }),
     prisma.directCost.findMany({
-      where: { year: YEAR },
+      where: { year },
       include: {
         itItem: { include: { serviceCategory: true } },
       },
@@ -45,6 +47,11 @@ async function getDashboardData() {
     (sum, dc) => sum + toNumber(dc.totalCost),
     0
   )
+
+  // Count assignments with no price defined for this year
+  const unpricedCount = assignments.filter(
+    (a) => a.itItem.prices.length === 0
+  ).length
 
   // Cost breakdown by service category
   const byCategory = categories.map((cat) => {
@@ -67,16 +74,22 @@ async function getDashboardData() {
     chargebackItemCount,
     areaCount,
     assignmentCount: assignments.length,
+    unpricedCount,
     assignmentTotal,
     directCostTotal,
     grandTotal: assignmentTotal + directCostTotal,
     byCategory,
-    year: YEAR,
+    year,
   }
 }
 
-export default async function DashboardPage() {
-  const data = await getDashboardData()
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: { year?: string }
+}) {
+  const year = parseInt(searchParams.year ?? '') || DEFAULT_YEAR
+  const data = await getDashboardData(year)
 
   const stats = [
     { label: 'Active Employees',   value: data.employeeCount.toString() },
@@ -87,13 +100,38 @@ export default async function DashboardPage() {
 
   return (
     <div className="p-6 max-w-5xl">
+
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          IT Chargeback overview · Year {data.year}
-        </p>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            IT Chargeback overview · Year {data.year}
+          </p>
+        </div>
+        <YearSelector year={data.year} basePath="/" />
       </div>
+
+      {/* Unpriced assignments alert */}
+      {data.unpricedCount > 0 && (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <span className="mt-0.5 text-amber-500 text-lg leading-none shrink-0">⚠</span>
+          <div className="text-sm">
+            <span className="font-semibold text-amber-800">
+              {data.unpricedCount} assignment{data.unpricedCount !== 1 ? 's' : ''} have no unit price for {data.year}
+            </span>
+            <span className="text-amber-700">
+              {' '}— their cost is currently shown as €0.{' '}
+            </span>
+            <Link
+              href={`/assignments?year=${data.year}&unpriced=true`}
+              className="font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900"
+            >
+              View unpriced assignments →
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -187,6 +225,12 @@ export default async function DashboardPage() {
               </tr>
             </tfoot>
           </table>
+        </div>
+      )}
+
+      {data.byCategory.length === 0 && data.assignmentCount === 0 && (
+        <div className="rounded-lg border border-gray-200 bg-white p-10 text-center text-sm text-gray-400">
+          No cost data recorded for {data.year}.
         </div>
       )}
     </div>
