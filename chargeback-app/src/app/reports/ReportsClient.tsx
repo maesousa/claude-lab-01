@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { formatCurrency, toNumber } from '@/lib/utils'
+import { downloadCsv } from '@/lib/export'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,37 @@ export default function ReportsClient() {
       .sort((a, b) => b.total - a.total)
   }, [assignments, directCosts])
 
+  // ─── CSV export ────────────────────────────────────────────────────────────
+
+  function handleExport() {
+    if (reportType === 'area') {
+      downloadCsv(`chargeback-area-${year}.csv`, byArea.map((r) => ({
+        'Area Code': r.areaCode,
+        'Area Name': r.areaName,
+        'Assignment Cost (€)': r.assignmentCost,
+        'Direct Cost (€)': r.directCost,
+        'Total Cost (€)': r.total,
+      })))
+    } else if (reportType === 'employee') {
+      downloadCsv(`chargeback-employee-${year}.csv`, byEmployee.map((r) => ({
+        'Last Name': r.lastName,
+        'First Name': r.firstName,
+        'Area': r.areaName,
+        'Total Assigned Cost (€)': r.total,
+        '# Items': r.itemCount,
+      })))
+    } else {
+      const catGrandTotal = byCategory.reduce((s, r) => s + r.total, 0)
+      downloadCsv(`chargeback-category-${year}.csv`, byCategory.map((r) => ({
+        'Category': r.catName,
+        'Assignment Cost (€)': r.assignmentCost,
+        'Direct Cost (€)': r.directCost,
+        'Total Cost (€)': r.total,
+        '% of Total': catGrandTotal > 0 ? +((r.total / catGrandTotal) * 100).toFixed(1) : 0,
+      })))
+    }
+  }
+
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
   const hasData = assignments.length > 0 || directCosts.length > 0
@@ -204,20 +236,29 @@ export default function ReportsClient() {
       </div>
 
       {/* ── Report type tabs ── */}
-      <div className="flex gap-2 mb-5">
-        {REPORT_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setReportType(tab.id)}
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              reportType === tab.id
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex gap-2">
+          {REPORT_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setReportType(tab.id)}
+              className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                reportType === tab.id
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={handleExport}
+          disabled={loading || !hasData}
+          className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Export CSV
+        </button>
       </div>
 
       {/* ── Table area ── */}
