@@ -1,19 +1,60 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import type { ValidatedRow, ImportPreviewResponse, ImportResult } from '@/lib/importUtils'
+import type {
+  ValidatedRow,
+  ImportPreviewResponse,
+  ImportResult,
+  OrgValidatedRow,
+  OrgPreviewResponse,
+  CatalogueValidatedRow,
+  CataloguePreviewResponse,
+  EmployeeValidatedRow,
+  EmployeePreviewResponse,
+} from '@/lib/importUtils'
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
-type ImportType = 'assignments' | 'direct-costs' | 'prices'
 
-const TABS: { id: ImportType; label: string }[] = [
-  { id: 'assignments',  label: 'Assignments' },
-  { id: 'direct-costs', label: 'Direct Costs' },
-  { id: 'prices',       label: 'Annual Prices' },
+type MasterImportType    = 'organisation' | 'catalogue' | 'employees'
+type OperationalImportType = 'assignments' | 'direct-costs' | 'prices'
+type ImportType          = MasterImportType | OperationalImportType
+
+interface TabDef { id: ImportType; label: string; group: 'master' | 'operational' }
+
+const TABS: TabDef[] = [
+  { id: 'organisation',  label: 'Organisation',  group: 'master' },
+  { id: 'catalogue',     label: 'IT Catalogue',  group: 'master' },
+  { id: 'employees',     label: 'Employees',     group: 'master' },
+  { id: 'assignments',   label: 'Assignments',   group: 'operational' },
+  { id: 'direct-costs',  label: 'Direct Costs',  group: 'operational' },
+  { id: 'prices',        label: 'Annual Prices', group: 'operational' },
 ]
 
-const TEMPLATES: Record<ImportType, { columns: string[]; example: string[] }> = {
-  'assignments': {
+// ─── Template hints ────────────────────────────────────────────────────────────
+
+interface TemplateHint {
+  columns:  string[]
+  example:  string[]
+  notes?:   string
+}
+
+const TEMPLATES: Record<ImportType, TemplateHint> = {
+  organisation: {
+    columns: ['Pelouro', 'Direcção', 'Centro Custo', 'Area'],
+    example: ['Comercial', 'On-Trade', 'G0TJ1201F', 'Customer Develop Sul'],
+    notes:   'Upserts the full Pelouro → Direcção → Area hierarchy. Column names are matched after stripping accents and spaces.',
+  },
+  catalogue: {
+    columns: ['ID', 'Posto de Trabalho', 'Valor YYYY'],
+    example: ['L1', 'Portátil Standard', '357'],
+    notes:   'Year is auto-detected from the price column header (e.g. "Valor 2026"). Items without an ID get a code generated from their name. Only the first sheet is read.',
+  },
+  employees: {
+    columns: ['numero', 'nome', 'email', 'centro custo'],
+    example: ['21644', 'SUSANA MATEUS', 'susana.mateus@company.com', 'G0TJ1201F'],
+    notes:   'Area codes must already exist — run the Organisation import first. Employee number is the unique key.',
+  },
+  assignments: {
     columns: ['employeeNumber', 'itItemCode', 'year', 'quantity', 'notes'],
     example: ['E001', 'HW-LAPTOP-STD', '2026', '1', 'Optional note'],
   },
@@ -21,15 +62,35 @@ const TEMPLATES: Record<ImportType, { columns: string[]; example: string[] }> = 
     columns: ['areaCode', 'itItemCode', 'year', 'totalCost', 'notes'],
     example: ['CC-201', 'APP-RPA-UIPATH', '2026', '12000.00', 'Optional note'],
   },
-  'prices': {
+  prices: {
     columns: ['itItemCode', 'year', 'unitPrice', 'notes'],
     example: ['HW-LAPTOP-STD', '2026', '450.00', 'Optional note'],
   },
 }
 
+// ─── Union of all preview response shapes ─────────────────────────────────────
+
+type AnyPreviewResponse =
+  | ImportPreviewResponse
+  | OrgPreviewResponse
+  | CataloguePreviewResponse
+  | EmployeePreviewResponse
+
+function getImportableCount(preview: AnyPreviewResponse | null): number {
+  if (!preview) return 0
+  return preview.rows.filter(
+    (r) => (r as { status: string }).status === 'valid' ||
+           (r as { status: string }).status === 'update'
+  ).length
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
+
 export default function ImportClient() {
-  const [activeTab, setActiveTab] = useState<ImportType>('assignments')
+  const [activeTab, setActiveTab] = useState<ImportType>('organisation')
+
+  const masterTabs      = TABS.filter((t) => t.group === 'master')
+  const operationalTabs = TABS.filter((t) => t.group === 'operational')
 
   return (
     <div className="p-6 space-y-6">
@@ -40,22 +101,26 @@ export default function ImportClient() {
         </p>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — two visual groups */}
       <div className="border-b border-slate-200">
-        <nav className="-mb-px flex gap-6">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={[
-                'pb-3 text-sm font-medium border-b-2 transition-colors',
-                activeTab === tab.id
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300',
-              ].join(' ')}
-            >
-              {tab.label}
-            </button>
+        <nav className="-mb-px flex items-center gap-1 flex-wrap">
+          {/* Master data group */}
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mr-2">
+            Master Data
+          </span>
+          {masterTabs.map((tab) => (
+            <TabButton key={tab.id} tab={tab} active={activeTab === tab.id} onClick={setActiveTab} />
+          ))}
+
+          {/* Divider */}
+          <span className="mx-3 h-5 w-px bg-slate-300 self-center" />
+
+          {/* Operational data group */}
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mr-2">
+            Operational
+          </span>
+          {operationalTabs.map((tab) => (
+            <TabButton key={tab.id} tab={tab} active={activeTab === tab.id} onClick={setActiveTab} />
           ))}
         </nav>
       </div>
@@ -63,15 +128,32 @@ export default function ImportClient() {
       {/* Active section */}
       {TABS.map((tab) =>
         activeTab === tab.id ? (
-          <ImportSection
-            key={tab.id}
-            type={tab.id}
-            title={tab.label}
-            template={TEMPLATES[tab.id]}
-          />
+          <ImportSection key={tab.id} type={tab.id} title={tab.label} hint={TEMPLATES[tab.id]} />
         ) : null
       )}
     </div>
+  )
+}
+
+function TabButton({
+  tab, active, onClick,
+}: {
+  tab:    TabDef
+  active: boolean
+  onClick: (id: ImportType) => void
+}) {
+  return (
+    <button
+      onClick={() => onClick(tab.id)}
+      className={[
+        'pb-3 px-1 text-sm font-medium border-b-2 transition-colors',
+        active
+          ? 'border-blue-600 text-blue-600'
+          : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300',
+      ].join(' ')}
+    >
+      {tab.label}
+    </button>
   )
 }
 
@@ -80,21 +162,21 @@ export default function ImportClient() {
 type SectionPhase = 'idle' | 'validating' | 'preview' | 'importing' | 'done'
 
 interface ImportSectionProps {
-  type:     ImportType
-  title:    string
-  template: { columns: string[]; example: string[] }
+  type:  ImportType
+  title: string
+  hint:  TemplateHint
 }
 
-function ImportSection({ type, title, template }: ImportSectionProps) {
+function ImportSection({ type, title, hint }: ImportSectionProps) {
   const fileRef                          = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile]  = useState<File | null>(null)
   const [phase, setPhase]                = useState<SectionPhase>('idle')
-  const [preview, setPreview]            = useState<ImportPreviewResponse | null>(null)
+  const [preview, setPreview]            = useState<AnyPreviewResponse | null>(null)
   const [result, setResult]              = useState<ImportResult | null>(null)
   const [errorMsg, setErrorMsg]          = useState('')
   const [dragOver, setDragOver]          = useState(false)
 
-  // ── File selection ──────────────────────────────────────────────────────
+  // ── File selection ────────────────────────────────────────────────────
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null
     if (file) acceptFile(file)
@@ -129,7 +211,7 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
     if (fileRef.current) fileRef.current.value = ''
   }
 
-  // ── Upload helpers ──────────────────────────────────────────────────────
+  // ── Upload helpers ────────────────────────────────────────────────────
   async function uploadFile(file: File, dryRun: boolean): Promise<Response> {
     const fd = new FormData()
     fd.append('file', file)
@@ -137,7 +219,7 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
     return fetch(`/api/import/${type}`, { method: 'POST', body: fd })
   }
 
-  // ── Phase: Validate (dry run) ───────────────────────────────────────────
+  // ── Phase: Validate (dry run) ─────────────────────────────────────────
   async function handleValidate() {
     if (!selectedFile) return
     setPhase('validating')
@@ -150,7 +232,7 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
         setPhase('idle')
         return
       }
-      const data: ImportPreviewResponse = await res.json()
+      const data: AnyPreviewResponse = await res.json()
       setPreview(data)
       setPhase('preview')
     } catch {
@@ -159,7 +241,7 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
     }
   }
 
-  // ── Phase: Import (actual) ──────────────────────────────────────────────
+  // ── Phase: Import (actual) ────────────────────────────────────────────
   async function handleImport() {
     if (!selectedFile) return
     setPhase('importing')
@@ -181,30 +263,25 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
     }
   }
 
-  // ── Row counts for the Import button label ──────────────────────────────
-  const importableCount = preview
-    ? preview.rows.filter((r) => r.status === 'valid' || r.status === 'update').length
-    : 0
+  const importableCount = getImportableCount(preview)
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
       {/* Template hint */}
       <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm">
         <p className="font-medium text-slate-700 mb-1">Expected columns for {title}:</p>
         <div className="flex flex-wrap gap-2 mb-2">
-          {template.columns.map((col) => (
+          {hint.columns.map((col) => (
             <code key={col} className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-700">
               {col}
             </code>
           ))}
         </div>
-        <p className="text-slate-500 text-xs">
-          Example row: {template.example.join(' · ')}
-        </p>
-        <p className="text-slate-400 text-xs mt-1">
-          Column names are case-insensitive. Common aliases are accepted (e.g. &quot;Employee No&quot;, &quot;Item Code&quot;).
-        </p>
+        <p className="text-slate-500 text-xs">Example row: {hint.example.join(' · ')}</p>
+        {hint.notes && (
+          <p className="text-slate-500 text-xs mt-1">{hint.notes}</p>
+        )}
       </div>
 
       {/* Drop zone */}
@@ -229,13 +306,8 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
           {selectedFile ? (
             <div className="text-center space-y-1">
               <p className="text-sm font-medium text-slate-700">📄 {selectedFile.name}</p>
-              <p className="text-xs text-slate-500">
-                {(selectedFile.size / 1024).toFixed(1)} KB
-              </p>
-              <button
-                onClick={reset}
-                className="text-xs text-red-500 hover:text-red-700 underline mt-1"
-              >
+              <p className="text-xs text-slate-500">{(selectedFile.size / 1024).toFixed(1)} KB</p>
+              <button onClick={reset} className="text-xs text-red-500 hover:text-red-700 underline mt-1">
                 Remove
               </button>
             </div>
@@ -271,14 +343,12 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
       {/* Loading states */}
       {phase === 'validating' && (
         <div className="flex items-center gap-2 text-sm text-slate-500">
-          <Spinner />
-          <span>Parsing and validating…</span>
+          <Spinner /> <span>Parsing and validating…</span>
         </div>
       )}
       {phase === 'importing' && (
         <div className="flex items-center gap-2 text-sm text-slate-500">
-          <Spinner />
-          <span>Importing records…</span>
+          <Spinner /> <span>Importing records…</span>
         </div>
       )}
 
@@ -289,28 +359,41 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
         </div>
       )}
 
-      {/* Preview table */}
+      {/* Preview */}
       {phase === 'preview' && preview && (
         <div className="space-y-4">
           {/* Summary pills */}
-          <div className="flex flex-wrap gap-3">
-            <SummaryPill label="Total" value={preview.summary.total} color="slate" />
-            {preview.summary.valid > 0 && (
-              <SummaryPill label="New" value={preview.summary.valid} color="green" />
-            )}
-            {preview.summary.updates > 0 && (
-              <SummaryPill label="Update" value={preview.summary.updates} color="blue" />
-            )}
-            {preview.summary.duplicates > 0 && (
-              <SummaryPill label="Skip" value={preview.summary.duplicates} color="amber" />
-            )}
-            {preview.summary.errors > 0 && (
-              <SummaryPill label="Error" value={preview.summary.errors} color="red" />
-            )}
-          </div>
+          <SummaryPillGroup summary={preview.summary} />
 
-          {/* Row table */}
-          <PreviewTable rows={preview.rows} type={type} />
+          {/* Catalogue-specific notice */}
+          {type === 'catalogue' && 'defaultCategoryName' in preview &&
+            (preview as CataloguePreviewResponse).defaultCategoryName && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                ℹ️ New IT items will be assigned to category:{' '}
+                <strong>{(preview as CataloguePreviewResponse).defaultCategoryName}</strong>.
+                You can update each item&apos;s category on the IT Items page after import.
+              </div>
+            )}
+
+          {/* Row preview table — dispatched by type */}
+          {(type === 'assignments' || type === 'direct-costs' || type === 'prices') && (
+            <LegacyPreviewTable
+              rows={(preview as ImportPreviewResponse).rows}
+              type={type as OperationalImportType}
+            />
+          )}
+          {type === 'organisation' && (
+            <OrgPreviewTable rows={(preview as OrgPreviewResponse).rows} />
+          )}
+          {type === 'catalogue' && (
+            <CataloguePreviewTable
+              rows={(preview as CataloguePreviewResponse).rows}
+              year={(preview as CataloguePreviewResponse).year}
+            />
+          )}
+          {type === 'employees' && (
+            <EmployeePreviewTable rows={(preview as EmployeePreviewResponse).rows} />
+          )}
 
           {/* Action buttons */}
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -340,9 +423,15 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
           <div className="rounded-lg bg-green-50 border border-green-200 px-5 py-4">
             <p className="font-semibold text-green-800 text-sm mb-2">Import complete</p>
             <ul className="text-sm text-green-700 space-y-0.5">
-              {result.imported > 0 && <li>✅ {result.imported} record{result.imported !== 1 ? 's' : ''} inserted</li>}
-              {result.updated  > 0 && <li>🔄 {result.updated}  record{result.updated  !== 1 ? 's' : ''} updated</li>}
-              {result.skipped  > 0 && <li>⏭️ {result.skipped}  record{result.skipped  !== 1 ? 's' : ''} skipped (already existed)</li>}
+              {result.imported > 0 && (
+                <li>✅ {result.imported} record{result.imported !== 1 ? 's' : ''} inserted</li>
+              )}
+              {result.updated  > 0 && (
+                <li>🔄 {result.updated}  record{result.updated  !== 1 ? 's' : ''} updated</li>
+              )}
+              {result.skipped  > 0 && (
+                <li>⏭️ {result.skipped}  record{result.skipped  !== 1 ? 's' : ''} skipped</li>
+              )}
               {result.errors.length > 0 && (
                 <li className="text-red-700">
                   ❌ {result.errors.length} row{result.errors.length !== 1 ? 's' : ''} failed
@@ -369,14 +458,27 @@ function ImportSection({ type, title, template }: ImportSectionProps) {
   )
 }
 
-// ─── Preview table ─────────────────────────────────────────────────────────────
+// ─── Summary pill group ────────────────────────────────────────────────────────
 
-interface PreviewTableProps {
-  rows: ValidatedRow[]
-  type: ImportType
+function SummaryPillGroup({
+  summary,
+}: {
+  summary: { total: number; valid: number; updates: number; errors: number; duplicates: number }
+}) {
+  return (
+    <div className="flex flex-wrap gap-3">
+      <SummaryPill label="Total"  value={summary.total}      color="slate" />
+      {summary.valid      > 0 && <SummaryPill label="New"    value={summary.valid}      color="green" />}
+      {summary.updates    > 0 && <SummaryPill label="Update" value={summary.updates}    color="blue" />}
+      {summary.duplicates > 0 && <SummaryPill label="Skip"   value={summary.duplicates} color="amber" />}
+      {summary.errors     > 0 && <SummaryPill label="Error"  value={summary.errors}     color="red" />}
+    </div>
+  )
 }
 
-const STATUS_STYLES: Record<string, string> = {
+// ─── Shared table styles ───────────────────────────────────────────────────────
+
+const STATUS_ROW: Record<string, string> = {
   valid:     'bg-green-50',
   update:    'bg-blue-50',
   duplicate: 'bg-amber-50',
@@ -390,86 +492,242 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   error:     { label: 'Error',  cls: 'bg-red-100   text-red-700'   },
 }
 
-function PreviewTable({ rows, type }: PreviewTableProps) {
-  const isAssignments = type === 'assignments'
-  const isDirect      = type === 'direct-costs'
-  const isPrices      = type === 'prices'
-
+function TableWrapper({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm max-h-96 overflow-y-auto">
       <table className="min-w-full divide-y divide-slate-200 text-xs">
-        <thead className="bg-slate-50 sticky top-0">
-          <tr>
-            <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">#</th>
-            {isAssignments && <>
-              <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Employee No</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Employee Name</th>
-            </>}
-            {isDirect && <>
-              <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Area</th>
-            </>}
-            {(isAssignments || isDirect || isPrices) && (
-              <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">IT Item</th>
-            )}
-            <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Year</th>
-            {isAssignments && <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Quantity</th>}
-            {isDirect      && <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Total Cost</th>}
-            {isPrices      && <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Unit Price</th>}
-            <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Notes</th>
-            <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 bg-white">
-          {rows.map((row) => {
-            const badge = STATUS_BADGE[row.status]
-            return (
-              <tr key={row.rowIndex} className={STATUS_STYLES[row.status]}>
-                <td className="px-3 py-2 text-slate-400">{row.rowIndex}</td>
-                {isAssignments && <>
-                  <td className="px-3 py-2 font-mono text-slate-700">{row.employeeNumber ?? '—'}</td>
-                  <td className="px-3 py-2 text-slate-700">{row.employeeName ?? <span className="text-red-500 italic">not found</span>}</td>
-                </>}
-                {isDirect && (
-                  <td className="px-3 py-2 text-slate-700">
-                    {row.areaName
-                      ? <span>{row.areaCode} — {row.areaName}</span>
-                      : <span className="text-red-500 italic">{row.areaCode ?? '—'}</span>}
-                  </td>
-                )}
-                {(isAssignments || isDirect || isPrices) && (
-                  <td className="px-3 py-2 text-slate-700">
-                    {row.itItemName
-                      ? <span>{row.itItemCode} — {row.itItemName}</span>
-                      : <span className="text-red-500 italic">{row.itItemCode ?? '—'}</span>}
-                  </td>
-                )}
-                <td className="px-3 py-2 text-slate-700">{row.year ?? '—'}</td>
-                {isAssignments && <td className="px-3 py-2 text-slate-700">{row.quantity ?? '—'}</td>}
-                {isDirect      && <td className="px-3 py-2 text-slate-700">{row.totalCost != null ? `€ ${row.totalCost.toFixed(2)}` : '—'}</td>}
-                {isPrices      && <td className="px-3 py-2 text-slate-700">{row.unitPrice != null ? `€ ${row.unitPrice.toFixed(2)}` : '—'}</td>}
-                <td className="px-3 py-2 text-slate-500 max-w-[140px] truncate">{row.notes ?? '—'}</td>
-                <td className="px-3 py-2">
-                  <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${badge.cls}`}>
-                    {badge.label}
-                  </span>
-                  {row.errors.length > 0 && (
-                    <ul className="mt-0.5 space-y-0.5">
-                      {row.errors.map((e, i) => (
-                        <li key={i} className="text-red-600 text-xs">{e}</li>
-                      ))}
-                    </ul>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
+        {children}
       </table>
     </div>
   )
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="px-3 py-2 text-left font-semibold text-slate-500 uppercase tracking-wide text-[10px]">
+      {children}
+    </th>
+  )
+}
+
+function Td({ children, mono }: { children: React.ReactNode; mono?: boolean }) {
+  return (
+    <td className={['px-3 py-2 text-slate-700', mono ? 'font-mono' : ''].join(' ')}>
+      {children}
+    </td>
+  )
+}
+
+function RowStatus({ row }: { row: { status: string; errors: string[] } }) {
+  const badge = STATUS_BADGE[row.status] ?? { label: row.status, cls: 'bg-slate-100 text-slate-600' }
+  return (
+    <td className="px-3 py-2">
+      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${badge.cls}`}>
+        {badge.label}
+      </span>
+      {row.errors.length > 0 && (
+        <ul className="mt-0.5 space-y-0.5">
+          {row.errors.map((e, i) => (
+            <li key={i} className="text-red-600 text-[10px]">{e}</li>
+          ))}
+        </ul>
+      )}
+    </td>
+  )
+}
+
+// ─── Organisation preview table ────────────────────────────────────────────────
+
+function OrgPreviewTable({ rows }: { rows: OrgValidatedRow[] }) {
+  return (
+    <TableWrapper>
+      <thead className="bg-slate-50 sticky top-0">
+        <tr>
+          <Th>#</Th>
+          <Th>Pelouro</Th>
+          <Th>Direcção</Th>
+          <Th>Area Code</Th>
+          <Th>Area Name</Th>
+          <Th>Status</Th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100 bg-white">
+        {rows.map((row) => (
+          <tr key={row.rowIndex} className={STATUS_ROW[row.status]}>
+            <Td mono>{row.rowIndex}</Td>
+            <Td>
+              <span>{row.pelouroName ?? <em className="text-red-400">missing</em>}</span>
+              {row.isNewPelouro && (
+                <span className="ml-1 text-[9px] rounded bg-green-100 text-green-700 px-1">new</span>
+              )}
+            </Td>
+            <Td>
+              <span>{row.direcaoName ?? <em className="text-red-400">missing</em>}</span>
+              {row.isNewDirecao && (
+                <span className="ml-1 text-[9px] rounded bg-green-100 text-green-700 px-1">new</span>
+              )}
+            </Td>
+            <Td mono>{row.areaCode ?? '—'}</Td>
+            <Td>{row.areaName ?? '—'}</Td>
+            <RowStatus row={row} />
+          </tr>
+        ))}
+      </tbody>
+    </TableWrapper>
+  )
+}
+
+// ─── Catalogue preview table ───────────────────────────────────────────────────
+
+function CataloguePreviewTable({ rows, year }: { rows: CatalogueValidatedRow[]; year: number }) {
+  return (
+    <TableWrapper>
+      <thead className="bg-slate-50 sticky top-0">
+        <tr>
+          <Th>#</Th>
+          <Th>Code</Th>
+          <Th>Item Name</Th>
+          <Th>Year</Th>
+          <Th>Unit Price</Th>
+          <Th>Existing Price</Th>
+          <Th>Category</Th>
+          <Th>Status</Th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100 bg-white">
+        {rows.map((row) => (
+          <tr key={row.rowIndex} className={STATUS_ROW[row.status]}>
+            <Td mono>{row.rowIndex}</Td>
+            <Td mono>{row.itemCode ?? '—'}</Td>
+            <Td>
+              {row.itemName ?? <em className="text-red-400">missing</em>}
+              {row.isNewItem && (
+                <span className="ml-1 text-[9px] rounded bg-green-100 text-green-700 px-1">new item</span>
+              )}
+            </Td>
+            <Td>{row.year ?? year}</Td>
+            <Td mono>{row.unitPrice != null ? `€ ${row.unitPrice.toFixed(2)}` : '—'}</Td>
+            <Td mono>
+              {row.existingPrice != null ? (
+                <span className="text-slate-500">{`€ ${row.existingPrice.toFixed(2)}`}</span>
+              ) : '—'}
+            </Td>
+            <Td>{row.categoryName ?? '—'}</Td>
+            <RowStatus row={row} />
+          </tr>
+        ))}
+      </tbody>
+    </TableWrapper>
+  )
+}
+
+// ─── Employee preview table ────────────────────────────────────────────────────
+
+function EmployeePreviewTable({ rows }: { rows: EmployeeValidatedRow[] }) {
+  return (
+    <TableWrapper>
+      <thead className="bg-slate-50 sticky top-0">
+        <tr>
+          <Th>#</Th>
+          <Th>Emp No</Th>
+          <Th>First Name</Th>
+          <Th>Last Name</Th>
+          <Th>Email</Th>
+          <Th>Area Code</Th>
+          <Th>Area Name</Th>
+          <Th>Status</Th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100 bg-white">
+        {rows.map((row) => (
+          <tr key={row.rowIndex} className={STATUS_ROW[row.status]}>
+            <Td mono>{row.rowIndex}</Td>
+            <Td mono>{row.employeeNumber ?? <em className="text-red-400">missing</em>}</Td>
+            <Td>{row.firstName ?? '—'}</Td>
+            <Td>{row.lastName ?? '—'}</Td>
+            <Td>{row.email ?? <em className="text-red-400">missing</em>}</Td>
+            <Td mono>{row.areaCode ?? '—'}</Td>
+            <Td>
+              {row.areaName
+                ? row.areaName
+                : row.areaCode
+                  ? <span className="text-red-500 italic">not found</span>
+                  : '—'}
+            </Td>
+            <RowStatus row={row} />
+          </tr>
+        ))}
+      </tbody>
+    </TableWrapper>
+  )
+}
+
+// ─── Legacy preview table (Assignments / Direct Costs / Prices) ────────────────
+
+function LegacyPreviewTable({
+  rows, type,
+}: {
+  rows: ValidatedRow[]
+  type: OperationalImportType
+}) {
+  const isAssignments = type === 'assignments'
+  const isDirect      = type === 'direct-costs'
+  const isPrices      = type === 'prices'
+
+  return (
+    <TableWrapper>
+      <thead className="bg-slate-50 sticky top-0">
+        <tr>
+          <Th>#</Th>
+          {isAssignments && <><Th>Employee No</Th><Th>Employee Name</Th></>}
+          {isDirect      && <Th>Area</Th>}
+          {(isAssignments || isDirect || isPrices) && <Th>IT Item</Th>}
+          <Th>Year</Th>
+          {isAssignments && <Th>Qty</Th>}
+          {isDirect      && <Th>Total Cost</Th>}
+          {isPrices      && <Th>Unit Price</Th>}
+          <Th>Notes</Th>
+          <Th>Status</Th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100 bg-white">
+        {rows.map((row) => (
+          <tr key={row.rowIndex} className={STATUS_ROW[row.status]}>
+            <Td mono>{row.rowIndex}</Td>
+            {isAssignments && (
+              <>
+                <Td mono>{row.employeeNumber ?? '—'}</Td>
+                <Td>{row.employeeName ?? <span className="text-red-500 italic">not found</span>}</Td>
+              </>
+            )}
+            {isDirect && (
+              <Td>
+                {row.areaName
+                  ? `${row.areaCode} — ${row.areaName}`
+                  : <span className="text-red-500 italic">{row.areaCode ?? '—'}</span>}
+              </Td>
+            )}
+            {(isAssignments || isDirect || isPrices) && (
+              <Td>
+                {row.itItemName
+                  ? `${row.itItemCode} — ${row.itItemName}`
+                  : <span className="text-red-500 italic">{row.itItemCode ?? '—'}</span>}
+              </Td>
+            )}
+            <Td>{row.year ?? '—'}</Td>
+            {isAssignments && <Td>{row.quantity ?? '—'}</Td>}
+            {isDirect      && <Td>{row.totalCost != null ? `€ ${row.totalCost.toFixed(2)}` : '—'}</Td>}
+            {isPrices      && <Td>{row.unitPrice != null ? `€ ${row.unitPrice.toFixed(2)}` : '—'}</Td>}
+            <Td>{row.notes ?? '—'}</Td>
+            <RowStatus row={row} />
+          </tr>
+        ))}
+      </tbody>
+    </TableWrapper>
+  )
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function SummaryPill({
   label, value, color,
@@ -493,11 +751,7 @@ function SummaryPill({
 
 function Spinner() {
   return (
-    <svg
-      className="h-4 w-4 animate-spin text-blue-500"
-      fill="none"
-      viewBox="0 0 24 24"
-    >
+    <svg className="h-4 w-4 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path
         className="opacity-75"

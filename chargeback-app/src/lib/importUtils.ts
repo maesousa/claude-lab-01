@@ -19,10 +19,13 @@ export async function parseUploadedFile(
   const sheetName = workbook.SheetNames[0]
   const sheet    = workbook.Sheets[sheetName]
 
-  // sheet_to_json with raw:false converts all values to strings
+  // raw:true keeps numeric cells as JS numbers so that String(n) always
+  // uses the JS default representation ("9411.93"), avoiding locale-specific
+  // Excel number formatting (e.g. "9.411,93" in Portuguese cells) which would
+  // cause double-dot strings that parseFloat silently truncates.
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: '',
-    raw:    false,
+    raw:    true,
   })
 
   // Normalise headers: lowercase, strip non-alphanumeric chars
@@ -141,4 +144,85 @@ export function isUniqueConstraintError(err: unknown): boolean {
     typeof err === 'object' && err !== null && 'code' in err &&
     (err as { code: string }).code === 'P2002'
   )
+}
+
+// ─── Code generation ──────────────────────────────────────────────────────────
+
+/**
+ * Derive a stable uppercase code from a human-readable name.
+ * Strips diacritics, replaces non-alphanumeric runs with underscores, max 40 chars.
+ * e.g. "Áreas de Suporte"   → "AREAS_DE_SUPORTE"
+ *      "Office E3"           → "OFFICE_E3"
+ *      "Direcção On-Trade"   → "DIRECCAO_ON_TRADE"
+ */
+export function slugifyToCode(name: string): string {
+  return name
+    .normalize('NFD')                  // decompose é → e + combining acute
+    .replace(/[\u0300-\u036f]/g, '')   // drop combining diacritical marks
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')      // non-alphanumeric runs → underscore
+    .replace(/^_+|_+$/g, '')          // trim leading/trailing underscores
+    .slice(0, 40)
+}
+
+// ─── Organisation import types ────────────────────────────────────────────────
+
+export interface OrgValidatedRow {
+  rowIndex:      number
+  status:        RowStatus
+  errors:        string[]
+  pelouroName?:  string
+  pelouroCode?:  string
+  direcaoName?:  string
+  direcaoCode?:  string
+  areaCode?:     string
+  areaName?:     string
+  isNewPelouro?: boolean
+  isNewDirecao?: boolean
+}
+
+export interface OrgPreviewResponse {
+  rows:    OrgValidatedRow[]
+  summary: { total: number; valid: number; updates: number; errors: number; duplicates: number }
+}
+
+// ─── Catalogue import types ───────────────────────────────────────────────────
+
+export interface CatalogueValidatedRow {
+  rowIndex:       number
+  status:         RowStatus
+  errors:         string[]
+  itemCode?:      string
+  itemName?:      string
+  year?:          number
+  unitPrice?:     number
+  isNewItem?:     boolean
+  categoryName?:  string
+  existingPrice?: number
+}
+
+export interface CataloguePreviewResponse {
+  rows:                CatalogueValidatedRow[]
+  summary:             { total: number; valid: number; updates: number; errors: number; duplicates: number }
+  year:                number
+  defaultCategoryName: string | null
+}
+
+// ─── Employee import types ────────────────────────────────────────────────────
+
+export interface EmployeeValidatedRow {
+  rowIndex:        number
+  status:          RowStatus
+  errors:          string[]
+  employeeNumber?: string
+  firstName?:      string
+  lastName?:       string
+  email?:          string
+  areaCode?:       string
+  areaName?:       string
+}
+
+export interface EmployeePreviewResponse {
+  rows:    EmployeeValidatedRow[]
+  summary: { total: number; valid: number; updates: number; errors: number; duplicates: number }
 }
