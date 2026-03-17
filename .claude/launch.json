@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "chargeback-app",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "C:\\Windows\\System32\\cmd.exe",
+      "runtimeArgs": ["/c", "cd chargeback-app && C:\\Progra~1\\nodejs\\npm.cmd run dev"],
       "port": 3000,
       "autoPort": true
     },
