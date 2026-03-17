@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import { formatCurrency, toNumber } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ type DialogState =
   | { mode: 'create' }
   | { mode: 'edit'; assignment: AssignmentRow }
   | { mode: 'delete'; assignment: AssignmentRow }
+  | { mode: 'copy' }
   | null
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -97,9 +99,21 @@ const emptyForm: FormState = {
   notes: '',
 }
 
+// ─── Props ────────────────────────────────────────────────────────────────────
+
+interface AssignmentsClientProps {
+  defaultYear?: number
+  defaultUnpriced?: boolean
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function AssignmentsClient() {
+export default function AssignmentsClient({
+  defaultYear = DEFAULT_YEAR,
+  defaultUnpriced = false,
+}: AssignmentsClientProps) {
+  const router = useRouter()
+
   // Reference data (loaded once)
   const [employees, setEmployees] = useState<EmployeeOption[]>([])
   const [areas, setAreas] = useState<AreaOption[]>([])
@@ -107,7 +121,7 @@ export default function AssignmentsClient() {
   const [chargebackItems, setChargebackItems] = useState<ITItemOption[]>([])
 
   // Assignments for selected year
-  const [year, setYear] = useState(DEFAULT_YEAR)
+  const [year, setYear] = useState(defaultYear)
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -116,6 +130,10 @@ export default function AssignmentsClient() {
   const [filterAreaId, setFilterAreaId] = useState('')
   const [filterCategoryId, setFilterCategoryId] = useState('')
   const [filterFundingModel, setFilterFundingModel] = useState('')
+  const [filterUnpriced, setFilterUnpriced] = useState(defaultUnpriced)
+
+  // Copy banner
+  const [copyBanner, setCopyBanner] = useState<{ created: number; skipped: number } | null>(null)
 
   // Dialog state
   const [dialog, setDialog] = useState<DialogState>(null)
@@ -167,10 +185,35 @@ export default function AssignmentsClient() {
       .catch((err) => console.error('[AssignmentsClient] fetch items:', err))
   }, [year, fetchAssignments])
 
+  // Sync year into URL
+  function changeYear(y: number) {
+    setYear(y)
+    setCopyBanner(null)
+    const params = new URLSearchParams()
+    params.set('year', String(y))
+    if (filterUnpriced) params.set('unpriced', 'true')
+    router.replace(`/assignments?${params.toString()}`)
+  }
+
+  // Sync unpriced filter into URL
+  function toggleUnpriced(val: boolean) {
+    setFilterUnpriced(val)
+    const params = new URLSearchParams()
+    params.set('year', String(year))
+    if (val) params.set('unpriced', 'true')
+    router.replace(`/assignments?${params.toString()}`)
+  }
+
   // ─── Derived / filtered data ────────────────────────────────────────────────
+
+  const unpricedCount = useMemo(
+    () => assignments.filter((a) => a.itItem.prices.length === 0).length,
+    [assignments]
+  )
 
   const filtered = useMemo(() => {
     return assignments.filter((a) => {
+      if (filterUnpriced && a.itItem.prices.length > 0) return false
       if (search) {
         const q = search.toLowerCase()
         const empFull = `${a.employee.firstName} ${a.employee.lastName}`.toLowerCase()
@@ -189,14 +232,14 @@ export default function AssignmentsClient() {
       if (filterFundingModel && a.itItem.fundingModel !== filterFundingModel) return false
       return true
     })
-  }, [assignments, search, filterAreaId, filterCategoryId, filterFundingModel])
+  }, [assignments, search, filterAreaId, filterCategoryId, filterFundingModel, filterUnpriced])
 
   const totalCost = useMemo(
     () => filtered.reduce((sum, a) => sum + toNumber(a.cost), 0),
     [filtered]
   )
 
-  const hasFilters = search || filterAreaId || filterCategoryId || filterFundingModel
+  const hasFilters = search || filterAreaId || filterCategoryId || filterFundingModel || filterUnpriced
 
   // ─── Cost preview (create form) ─────────────────────────────────────────────
 
@@ -231,6 +274,11 @@ export default function AssignmentsClient() {
 
   function openDelete(a: AssignmentRow) {
     setDialog({ mode: 'delete', assignment: a })
+  }
+
+  function openCopy() {
+    setFormError(null)
+    setDialog({ mode: 'copy' })
   }
 
   function closeDialog() {
@@ -329,6 +377,33 @@ export default function AssignmentsClient() {
     }
   }
 
+  async function handleCopy(fromYear: number, toYear: number) {
+    setSubmitting(true)
+    setFormError(null)
+    try {
+      const res = await fetch('/api/assignments/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromYear, toYear }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setFormError(data.error ?? 'Failed to copy assignments.')
+        return
+      }
+      closeDialog()
+      setCopyBanner({ created: data.created, skipped: data.skipped })
+      // If we're already on the toYear, refresh the list
+      if (year === toYear) await fetchAssignments(year)
+      // Auto-dismiss banner after 8 s
+      setTimeout(() => setCopyBanner(null), 8000)
+    } catch {
+      setFormError('Network error. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -340,21 +415,51 @@ export default function AssignmentsClient() {
           <h1 className="text-2xl font-bold text-gray-900">Individual Costs</h1>
           <p className="text-sm text-gray-500 mt-0.5">Per-employee IT cost allocations</p>
         </div>
-        <button
-          onClick={openCreate}
-          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
-        >
-          <span className="text-base leading-none">＋</span>
-          New Assignment
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openCopy}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+          >
+            Copy from year…
+          </button>
+          <button
+            onClick={openCreate}
+            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+          >
+            <span className="text-base leading-none">＋</span>
+            New Assignment
+          </button>
+        </div>
       </div>
+
+      {/* ── Copy success banner ── */}
+      {copyBanner && (
+        <div className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-green-300 bg-green-50 px-4 py-3">
+          <div className="flex items-start gap-2 text-sm">
+            <span className="text-green-600 text-base leading-none mt-0.5">✓</span>
+            <span className="text-green-800">
+              Copy complete:{' '}
+              <strong>{copyBanner.created} assignment{copyBanner.created !== 1 ? 's' : ''} created</strong>
+              {copyBanner.skipped > 0 && (
+                <>, {copyBanner.skipped} skipped (already existed)</>
+              )}.
+            </span>
+          </div>
+          <button
+            onClick={() => setCopyBanner(null)}
+            className="text-green-500 hover:text-green-700 text-lg leading-none shrink-0"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* ── Filters ── */}
       <div className="flex flex-wrap items-center gap-3 mb-5">
         {/* Year selector */}
         <select
           value={year}
-          onChange={(e) => setYear(Number(e.target.value))}
+          onChange={(e) => changeYear(Number(e.target.value))}
           className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           {YEARS.map((y) => (
@@ -406,6 +511,20 @@ export default function AssignmentsClient() {
           <option value="CORPORATE">Corporate</option>
         </select>
 
+        {/* Unpriced toggle */}
+        {unpricedCount > 0 && (
+          <button
+            onClick={() => toggleUnpriced(!filterUnpriced)}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium shadow-sm transition-colors ${
+              filterUnpriced
+                ? 'bg-amber-500 text-white border border-amber-500'
+                : 'border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
+            }`}
+          >
+            ⚠ {unpricedCount} unpriced
+          </button>
+        )}
+
         {/* Clear filters */}
         {hasFilters && (
           <button
@@ -414,6 +533,7 @@ export default function AssignmentsClient() {
               setFilterAreaId('')
               setFilterCategoryId('')
               setFilterFundingModel('')
+              toggleUnpriced(false)
             }}
             className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 shadow-sm"
           >
@@ -442,6 +562,13 @@ export default function AssignmentsClient() {
             <p className="text-xs text-gray-400 mt-0.5">filtered subtotal</p>
           )}
         </div>
+        {unpricedCount > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-5 py-3.5 shadow-sm min-w-[140px]">
+            <p className="text-xs font-medium text-amber-600 uppercase tracking-wide">Unpriced</p>
+            <p className="text-3xl font-bold text-amber-700 mt-1 tabular-nums">{unpricedCount}</p>
+            <p className="text-xs text-amber-500 mt-0.5">cost = €0</p>
+          </div>
+        )}
       </div>
 
       {/* ── Table ── */}
@@ -616,6 +743,15 @@ export default function AssignmentsClient() {
                 assignment={dialog.assignment}
                 submitting={submitting}
                 onConfirm={handleDelete}
+                onClose={closeDialog}
+              />
+            )}
+            {dialog.mode === 'copy' && (
+              <CopyDialog
+                currentYear={year}
+                formError={formError}
+                submitting={submitting}
+                onConfirm={handleCopy}
                 onClose={closeDialog}
               />
             )}
@@ -976,6 +1112,102 @@ function DeleteDialog({ assignment, submitting, onConfirm, onClose }: DeleteDial
           className="rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? 'Deleting…' : 'Delete Assignment'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Copy Dialog ──────────────────────────────────────────────────────────────
+
+interface CopyDialogProps {
+  currentYear: number
+  formError: string | null
+  submitting: boolean
+  onConfirm: (fromYear: number, toYear: number) => void
+  onClose: () => void
+}
+
+function CopyDialog({ currentYear, formError, submitting, onConfirm, onClose }: CopyDialogProps) {
+  const [fromYear, setFromYear] = useState(() =>
+    YEARS.includes(currentYear - 1) ? currentYear - 1 : YEARS[0]
+  )
+  const [toYear, setToYear] = useState(currentYear)
+
+  const sameYear = fromYear === toYear
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-lg font-semibold text-gray-900">Copy Assignments from Year</h2>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+      </div>
+
+      <p className="text-sm text-gray-500 mb-5">
+        Copies all assignments from the source year into the target year. Rows where the same
+        employee + IT item combination already exists in the target year will be skipped.
+      </p>
+
+      <div className="grid grid-cols-2 gap-4 mb-5">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">From year</label>
+          <select
+            value={fromYear}
+            onChange={(e) => setFromYear(Number(e.target.value))}
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {YEARS.map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">To year</label>
+          <select
+            value={toYear}
+            onChange={(e) => setToYear(Number(e.target.value))}
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {YEARS.map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {sameYear && (
+        <p className="mb-4 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+          Source and target year must be different.
+        </p>
+      )}
+
+      {!sameYear && (
+        <div className="mb-4 rounded-md bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+          All assignments from <strong>{fromYear}</strong> will be copied to{' '}
+          <strong>{toYear}</strong>. Existing {toYear} rows will not be overwritten.
+        </div>
+      )}
+
+      {formError && (
+        <p className="mb-4 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+          {formError}
+        </p>
+      )}
+
+      <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+        <button
+          onClick={onClose}
+          disabled={submitting}
+          className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => onConfirm(fromYear, toYear)}
+          disabled={submitting || sameYear}
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {submitting ? 'Copying…' : `Copy ${fromYear} → ${toYear}`}
         </button>
       </div>
     </div>
